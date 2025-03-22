@@ -22,3 +22,10 @@ XcodeProjExtraFilesHintInfo = provider(
         "files": "List of files to include in the extra files.",
     },
 )
+ToolchainInfo = provider(
+    doc = "Information about the custom toolchain",
+    fields = {
+        "identifier": "The bundle identifier of the toolchain",
+        "name": "The full name of the toolchain",
+    },
+)
