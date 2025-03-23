@@ -19,7 +19,10 @@
 # - output_groups
 # - (optional) target_ids
 
-output_groups_flag="--output_groups=$(IFS=, ; echo "${output_groups[*]}")"
+output_groups_flag="--output_groups=$(
+  IFS=,
+  echo "${output_groups[*]}"
+)"
 readonly output_groups_flag
 
 # Set `output_base`
@@ -61,7 +64,7 @@ done
 bazel_cmd=(
   env -i
   "${passthrough_env[@]}"
-%bazel_env%
+  %bazel_env%
   "%bazel_path%"
 
   # Restart bazel server if `DEVELOPER_DIR` changes to clear `developerDirCache`
@@ -125,7 +128,6 @@ echo "Starting Bazel build"
   ${build_pre_config_flags:+"${build_pre_config_flags[@]}"} \
   --config="$config" \
   --color=yes \
-  ${toolchain:+--action_env=TOOLCHAINS="$toolchain"} \
   "$output_groups_flag" \
   "%generator_label%" \
   ${labels:+"--build_metadata=PATTERN=${labels[*]}"} \
@@ -135,17 +137,17 @@ echo "Starting Bazel build"
 
 if [[ -n "${target_ids:-}" ]]; then
   if [[ ! -s "%target_ids_list%" ]]; then
-      echo "error: \"%target_ids_list%\" was not created. This can happen if" \
-"you apply build-affecting flags to \"rules_xcodeproj_generator\" config, or" \
-"with the \"--@rules_xcodeproj//xcodeproj:extra_generator_flags\" flag." \
-"Please ensure that all build-affecting flags are moved to the" \
-"\"rules_xcodeproj\" config or" \
-"\"--@rules_xcodeproj//xcodeproj:extra_common_flags\" flag. If you are still" \
-"getting this error after adjusting your setup and regenerating your project," \
-"please file a bug report here:" \
-"https://github.com/MobileNativeFoundation/rules_xcodeproj/issues/new?template=bug.md" \
-        >&2
-      exit 1
+    echo "error: \"%target_ids_list%\" was not created. This can happen if" \
+      "you apply build-affecting flags to \"rules_xcodeproj_generator\" config, or" \
+      "with the \"--@rules_xcodeproj//xcodeproj:extra_generator_flags\" flag." \
+      "Please ensure that all build-affecting flags are moved to the" \
+      "\"rules_xcodeproj\" config or" \
+      "\"--@rules_xcodeproj//xcodeproj:extra_common_flags\" flag. If you are still" \
+      "getting this error after adjusting your setup and regenerating your project," \
+      "please file a bug report here:" \
+      "https://github.com/MobileNativeFoundation/rules_xcodeproj/issues/new?template=bug.md" \
+      >&2
+    exit 1
   fi
 
   # We need to sort the inputs for `comm` to work on macOS 15.4+
@@ -156,13 +158,13 @@ if [[ -n "${target_ids:-}" ]]; then
   )
 
   if [ -n "$diff_output" ]; then
-      missing_target_ids=("${diff_output[@]}")
-      echo "error: There were some target IDs that weren't known to Bazel" \
-"(e.g. \"${missing_target_ids[0]}\"). Please regenerate the project to fix" \
-"this. If you are still getting this error after regenerating your project," \
-"please file a bug report here:" \
-"https://github.com/MobileNativeFoundation/rules_xcodeproj/issues/new?template=bug.md" \
-        >&2
-      exit 1
+    missing_target_ids=("${diff_output[@]}")
+    echo "error: There were some target IDs that weren't known to Bazel" \
+      "(e.g. \"${missing_target_ids[0]}\"). Please regenerate the project to fix" \
+      "this. If you are still getting this error after regenerating your project," \
+      "please file a bug report here:" \
+      "https://github.com/MobileNativeFoundation/rules_xcodeproj/issues/new?template=bug.md" \
+      >&2
+    exit 1
   fi
 fi
