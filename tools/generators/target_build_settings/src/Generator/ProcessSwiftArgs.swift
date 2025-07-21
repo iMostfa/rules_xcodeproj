@@ -46,19 +46,19 @@ extension Generator {
             swiftIncludes: OrderedSet<String>
         ) {
             try await callable(
-                /*argsStream:*/ argsStream,
-                /*buildSettings:*/ &buildSettings,
-                /*includeSelfSwiftDebugSettings:*/
+                /* argsStream: */ argsStream,
+                /* buildSettings: */ &buildSettings,
+                /* includeSelfSwiftDebugSettings: */
                     includeSelfSwiftDebugSettings,
-                /*previewsFrameworkPaths:*/ previewsFrameworkPaths,
-                /*previewsIncludePath:*/ previewsIncludePath,
-                /*transitiveSwiftDebugSettingPaths:*/
+                /* previewsFrameworkPaths: */ previewsFrameworkPaths,
+                /* previewsIncludePath: */ previewsIncludePath,
+                /* transitiveSwiftDebugSettingPaths: */
                     transitiveSwiftDebugSettingPaths,
-                /*parseTransitiveSwiftDebugSettings:*/
+                /* parseTransitiveSwiftDebugSettings: */
                     parseTransitiveSwiftDebugSettings,
-                /*processSwiftArg:*/ processSwiftArg,
-                /*processSwiftClangArg:*/ processSwiftClangArg,
-                /*processSwiftFrontendArg:*/ processSwiftFrontendArg
+                /* processSwiftArg: */ processSwiftArg,
+                /* processSwiftClangArg: */ processSwiftClangArg,
+                /* processSwiftFrontendArg: */ processSwiftFrontendArg
             )
         }
     }
@@ -144,8 +144,8 @@ extension Generator.ProcessSwiftArgs {
         includeSelfSwiftDebugSettings: Bool,
         previewsFrameworkPaths: String,
         previewsIncludePath: String,
-        transitiveSwiftDebugSettingPaths: [URL],
-        parseTransitiveSwiftDebugSettings:
+        transitiveSwiftDebugSettingPaths _: [URL],
+        parseTransitiveSwiftDebugSettings _:
             Generator.ParseTransitiveSwiftDebugSettings,
         processSwiftArg: Generator.ProcessSwiftArg,
         processSwiftClangArg: Generator.ProcessSwiftClangArg,
@@ -293,7 +293,7 @@ extension Generator.ProcessSwiftArgs {
                 continue
             }
 
-            if !arg.hasPrefix("-") && arg.hasSuffix(".swift") {
+            if !arg.hasPrefix("-"), arg.hasSuffix(".swift") {
                 // These are the files to compile, not options. They are seen
                 // here because of the way we collect Swift compiler options.
                 // Ideally in the future we could collect Swift compiler options
@@ -317,8 +317,9 @@ extension Generator.ProcessSwiftArgs {
             ("OTHER_SWIFT_FLAGS", args.joined(separator: " ").pbxProjEscaped)
         )
 
-        // Work around https://github.com/MobileNativeFoundation/rules_xcodeproj/issues/3171
-        buildSettings.append(("SWIFT_ENABLE_EMIT_CONST_VALUES", "NO"))
+        buildSettings.append(
+            ("SWIFT_ENABLE_EMIT_CONST_VALUES", "NO")
+        )
 
         return (
             hasDebugInfo,
