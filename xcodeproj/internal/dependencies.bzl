@@ -9,7 +9,9 @@ _WATCHKIT2_EXTENSION = "W"  # "com.apple.product-type.watchkit2-extension"
 _XCODE_PREVIEW_PRODUCT_TYPES = {
     "A": None,  # com.apple.product-type.application.on-demand-install-capable
     "B": None,  # com.apple.product-type.bundle
+    "D": None,  # com.apple.product-type.library.dynamic
     "E": None,  # com.apple.product-type.extensionkit-extension
+    "L": None,  # com.apple.product-type.library.static
     "a": None,  # com.apple.product-type.application
     "d": None,  # com.apple.product-type.library.dynamic
     "e": None,  # com.apple.product-type.app-extension
