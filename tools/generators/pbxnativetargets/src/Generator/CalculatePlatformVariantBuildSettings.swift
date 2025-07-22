@@ -183,23 +183,25 @@ extension Generator.CalculatePlatformVariantBuildSettings {
             )
         }
 
-                buildSettings.append(
-            .init(
-                key: "LIBRARY_SEARCH_PATHS",
-                value: (
-                    platformVariant.librarySearchPaths
-                        .map {
-                            let path = $0.path.split(separator: "/").dropFirst().joined(separator: "/")
-                            return "\"$(BAZEL_OUT)/\(path)\""
-                        } + [
-                            XcodeUtils.getClangLibraryPath()
-                        ]
+        // Only add target-specific library search paths, not the shared clang library path
+        if !platformVariant.librarySearchPaths.isEmpty {
+            buildSettings.append(
+                .init(
+                    key: "LIBRARY_SEARCH_PATHS",
+                    value: (
+                        ["$(inherited)"] +
+                        platformVariant.librarySearchPaths
+                            .map {
+                                let path = $0.path.split(separator: "/").dropFirst().joined(separator: "/")
+                                return "\"$(BAZEL_OUT)/\(path)\""
+                            }
                     )
                     .sorted()
                     .joined(separator: " ")
                     .pbxProjEscaped
+                )
             )
-        )
+        }
 
         buildSettings.append(contentsOf: platformVariant.buildSettingsFromFile)
 

@@ -72,7 +72,8 @@ extension Generator {
             shard: UInt8,
             usesInfoPlist: Bool,
             watchKitExtensionProductIdentifier:
-                Identifiers.BuildFiles.SubIdentifier?
+                Identifiers.BuildFiles.SubIdentifier?,
+            sharedFrameworkRegistry: SharedFrameworkRegistry
         ) -> (
             buildPhases: [Object],
             buildFileObjects: [Object],
@@ -89,6 +90,7 @@ extension Generator {
                 /*usesInfoPlist:*/ usesInfoPlist,
                 /*watchKitExtensionProductIdentifier:*/
                     watchKitExtensionProductIdentifier,
+                /*sharedFrameworkRegistry:*/ sharedFrameworkRegistry,
                 /*createBazelIntegrationBuildPhaseObject:*/
                     createBazelIntegrationBuildPhaseObject,
                 /*createBuildFileSubIdentifier:*/ createBuildFileSubIdentifier,
@@ -122,6 +124,7 @@ extension Generator.CreateBuildPhases {
         _ usesInfoPlist: Bool,
         _ watchKitExtensionProductIdentifier:
             Identifiers.BuildFiles.SubIdentifier?,
+        _ sharedFrameworkRegistry: SharedFrameworkRegistry,
         _ createBazelIntegrationBuildPhaseObject:
             Generator.CreateBazelIntegrationBuildPhaseObject,
         _ createBuildFileSubIdentifier: Generator.CreateBuildFileSubIdentifier,
@@ -154,6 +157,7 @@ extension Generator.CreateBuildPhases {
         usesInfoPlist: Bool,
         watchKitExtensionProductIdentifier:
             Identifiers.BuildFiles.SubIdentifier?,
+        sharedFrameworkRegistry: SharedFrameworkRegistry,
         createBazelIntegrationBuildPhaseObject:
             Generator.CreateBazelIntegrationBuildPhaseObject,
         createBuildFileSubIdentifier: Generator.CreateBuildFileSubIdentifier,
@@ -283,47 +287,50 @@ extension Generator.CreateBuildPhases {
             )
         }
 
-                let libs = consolidatedInputs.librariesToLinkPaths + [
-            BazelPath(XcodeUtils.getClangRuntimePath())
-        ]
-        let librariesToLinkSubIdentifiers = libs.map { bazelPath in
-            return (
-                bazelPath,
-                createBuildFileSubIdentifier(
-                    BazelPath(bazelPath.path.split(separator: "/").last.map(String.init)!),
-                    type: .framework,
-                    shard: shard
-                ),
-                createBuildFileSubIdentifier(
-                    bazelPath,
-                    type: .framework,
-                    shard: shard
+        // Only add clang runtime libraries for targets that actually need them
+        var libs = consolidatedInputs.librariesToLinkPaths
+        if productType.requiresClangRuntime {
+            libs.append(BazelPath(XcodeUtils.getClangRuntimePath()))
+        }
+        
+        var libraryBuildFileIdentifiers: [String] = []
+        
+        // Use shared framework registry to avoid duplicating framework objects
+        for bazelPath in libs {
+            let (frameworkObject, frameworkSubIdentifier) = sharedFrameworkRegistry.getOrCreateFrameworkObject(
+                path: bazelPath,
+                createFrameworkObject: createFrameworkObject,
+                createBuildFileSubIdentifier: createBuildFileSubIdentifier,
+                shard: shard
+            )
+            
+            let (buildFileObject, buildFileSubIdentifier) = sharedFrameworkRegistry.getOrCreateBuildFileObject(
+                frameworkPath: bazelPath,
+                frameworkSubIdentifier: frameworkSubIdentifier,
+                createFrameworkBuildFileObject: createFrameworkBuildFileObject,
+                createBuildFileSubIdentifier: createBuildFileSubIdentifier,
+                shard: shard
+            )
+            
+            // Add to collections if not already present (shared objects won't be duplicated)
+            if !buildFileObjects.contains(where: { $0.identifier == frameworkObject.identifier }) {
+                buildFileObjects.append(frameworkObject)
+            }
+            if !buildFileObjects.contains(where: { $0.identifier == buildFileObject.identifier }) {
+                buildFileObjects.append(buildFileObject)
+            }
+            
+            libraryBuildFileIdentifiers.append(Identifiers.BuildFiles.id(subIdentifier: buildFileSubIdentifier))
+        }
+        
+        if !libraryBuildFileIdentifiers.isEmpty {
+            buildPhases.append(
+                createLinkBinaryWithLibrariesBuildPhaseObject(
+                    subIdentifier: identifier.subIdentifier,
+                    librariesToLinkIdentifiers: libraryBuildFileIdentifiers
                 )
             )
         }
-        librariesToLinkSubIdentifiers
-            .forEach { bazelPath, buildSubIdentifier, frameworkSubIdentifier  in
-                buildFileObjects.append(
-                    createFrameworkBuildFileObject(
-                        frameworkSubIdentifier: frameworkSubIdentifier,
-                        subIdentifier: buildSubIdentifier
-                    )
-                )
-                buildFileObjects.append(
-                    createFrameworkObject(
-                        frameworkPath: bazelPath,
-                        subIdentifier: frameworkSubIdentifier
-                    )
-                )
-            }
-        buildPhases.append(
-            createLinkBinaryWithLibrariesBuildPhaseObject(
-                subIdentifier: identifier.subIdentifier,
-                librariesToLinkIdentifiers: librariesToLinkSubIdentifiers
-                    .map { $0.1 }
-                    .map { Identifiers.BuildFiles.id(subIdentifier: $0) }
-            )
-        )
 
         return (buildPhases, buildFileObjects, buildFileSubIdentifiers)
     }
@@ -362,6 +369,43 @@ private extension PBXProductType {
              .watch2App,
              .watch2AppContainer,
              .resourceBundle:
+            return false
+        }
+    }
+    
+    /// Determines if this product type requires the clang runtime library.
+    var requiresClangRuntime: Bool {
+        switch self {
+        case .application,
+             .onDemandInstallCapableApplication,
+             .appExtension,
+             .intentsServiceExtension,
+             .messagesExtension,
+             .tvExtension,
+             .extensionKitExtension,
+             .watch2Extension,
+             .xcodeExtension,
+             .framework,
+             .dynamicLibrary,
+             .commandLineTool,
+             .xpcService:
+            return true
+        case .messagesApplication,
+             .watch2App,
+             .watch2AppContainer,
+             .stickerPack,
+             .bundle,
+             .resourceBundle,
+             .ocUnitTestBundle,
+             .unitTestBundle,
+             .uiTestBundle,
+             .staticFramework,
+             .xcFramework,
+             .staticLibrary,
+             .driverExtension,
+             .instrumentsPackage,
+             .metalLibrary,
+             .systemExtension:
             return false
         }
     }

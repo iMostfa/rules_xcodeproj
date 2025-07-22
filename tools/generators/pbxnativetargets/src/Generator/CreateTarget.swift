@@ -8,6 +8,7 @@ extension Generator {
         private let createProductObject: CreateProductObject
         private let createTargetObject: CreateTargetObject
         private let createXcodeConfigurations: CreateXcodeConfigurations
+        private let sharedFrameworkRegistry: SharedFrameworkRegistry
 
         private let callable: Callable
 
@@ -20,6 +21,7 @@ extension Generator {
             createProductObject: CreateProductObject,
             createTargetObject: CreateTargetObject,
             createXcodeConfigurations: CreateXcodeConfigurations,
+            sharedFrameworkRegistry: SharedFrameworkRegistry,
             callable: @escaping Callable = Self.defaultCallable
         ) {
             self.calculatePlatformVariants = calculatePlatformVariants
@@ -27,6 +29,7 @@ extension Generator {
             self.createProductObject = createProductObject
             self.createTargetObject = createTargetObject
             self.createXcodeConfigurations = createXcodeConfigurations
+            self.sharedFrameworkRegistry = sharedFrameworkRegistry
 
             self.callable = callable
         }
@@ -56,7 +59,8 @@ extension Generator {
                 /*createBuildPhases:*/ createBuildPhases,
                 /*createProductObject:*/ createProductObject,
                 /*createTargetObject:*/ createTargetObject,
-                /*createXcodeConfigurations:*/ createXcodeConfigurations
+                /*createXcodeConfigurations:*/ createXcodeConfigurations,
+                /*sharedFrameworkRegistry:*/ sharedFrameworkRegistry
             )
         }
     }
@@ -77,7 +81,8 @@ extension Generator.CreateTarget {
         _ createBuildPhases: Generator.CreateBuildPhases,
         _ createProductObject: Generator.CreateProductObject,
         _ createTargetObject: Generator.CreateTargetObject,
-        _ createXcodeConfigurations: Generator.CreateXcodeConfigurations
+        _ createXcodeConfigurations: Generator.CreateXcodeConfigurations,
+        _ sharedFrameworkRegistry: SharedFrameworkRegistry
     ) async throws -> (
         buildFileSubIdentifiers: [Identifiers.BuildFiles.SubIdentifier],
         objects: [Object]
@@ -95,7 +100,8 @@ extension Generator.CreateTarget {
         createBuildPhases: Generator.CreateBuildPhases,
         createProductObject: Generator.CreateProductObject,
         createTargetObject: Generator.CreateTargetObject,
-        createXcodeConfigurations: Generator.CreateXcodeConfigurations
+        createXcodeConfigurations: Generator.CreateXcodeConfigurations,
+        sharedFrameworkRegistry: SharedFrameworkRegistry
     ) async throws -> (
         buildFileSubIdentifiers: [Identifiers.BuildFiles.SubIdentifier],
         objects: [Object]
@@ -143,7 +149,8 @@ extension Generator.CreateTarget {
             shard: shard,
             usesInfoPlist: isBundle,
             watchKitExtensionProductIdentifier:
-                entry.watchKitExtensionProductIdentifier
+                entry.watchKitExtensionProductIdentifier,
+            sharedFrameworkRegistry: sharedFrameworkRegistry
         )
 
         let (

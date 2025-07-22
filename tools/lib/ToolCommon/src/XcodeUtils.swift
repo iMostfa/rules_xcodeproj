@@ -3,11 +3,19 @@ import Foundation
 /// Utilities for working with Xcode installations and toolchains.
 public enum XcodeUtils {
     
+    // MARK: - Cache Storage
+    private static var cachedDeveloperPath: String?
+    private static var cachedClangVersions: [String: String] = [:]
+    
     /// Gets the current Xcode developer directory path using `xcode-select -p`.
     ///
     /// - Returns: The path to the current Xcode developer directory.
     ///            Falls back to `/Applications/Xcode.app/Contents/Developer` if `xcode-select` fails.
     public static func getDeveloperPath() -> String {
+        if let cached = cachedDeveloperPath {
+            return cached
+        }
+        
         let process = Process()
         process.launchPath = "/usr/bin/xcode-select"
         process.arguments = ["-p"]
@@ -24,6 +32,7 @@ public enum XcodeUtils {
             if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !output.isEmpty,
                process.terminationStatus == 0 {
+                cachedDeveloperPath = output
                 return output
             }
         } catch {
@@ -31,7 +40,9 @@ public enum XcodeUtils {
         }
         
         // Fallback to default Xcode path
-        return "/Applications/Xcode.app/Contents/Developer"
+        let defaultPath = "/Applications/Xcode.app/Contents/Developer"
+        cachedDeveloperPath = defaultPath
+        return defaultPath
     }
     
     /// Gets the latest available Clang version for the given Xcode developer path.
@@ -40,6 +51,10 @@ public enum XcodeUtils {
     /// - Returns: The highest available Clang version number as a string.
     ///            Falls back to "16" if no versions are found.
     public static func getClangVersion(xcodeDevPath: String) -> String {
+        if let cached = cachedClangVersions[xcodeDevPath] {
+            return cached
+        }
+        
         let clangLibPath = "\(xcodeDevPath)/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang"
         
         do {
@@ -50,14 +65,18 @@ public enum XcodeUtils {
                 .sorted(by: >)
             
             if let latestVersion = versions.first {
-                return String(latestVersion)
+                let versionString = String(latestVersion)
+                cachedClangVersions[xcodeDevPath] = versionString
+                return versionString
             }
         } catch {
             // Fall through to default
         }
         
         // Fallback to version 16
-        return "16"
+        let fallbackVersion = "16"
+        cachedClangVersions[xcodeDevPath] = fallbackVersion
+        return fallbackVersion
     }
     
     /// Constructs the full path to the clang runtime library for iOS simulator.

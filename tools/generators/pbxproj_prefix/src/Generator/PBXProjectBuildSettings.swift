@@ -134,6 +134,11 @@ extension Generator {
                     .executionRootBasedBuildSettingPath
                     .pbxProjEscaped
             ),
+            .init(
+                key: "LIBRARY_SEARCH_PATHS",
+                value: XcodeUtils.getClangLibraryPath()
+                    .pbxProjEscaped
+            ),
             .init(key: "ONLY_ACTIVE_ARCH", value: "YES"),
             .init(
                 key: "PROJECT_DIR",
