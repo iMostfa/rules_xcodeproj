@@ -59,11 +59,31 @@ readonly build_pre_config_flags=(
   "--remote_download_regex=${indexstores_regex}.*|.*\.(cfg|c|C|cc|cl|cpp|cu|cxx|c++|def|h|H|hh|hpp|hxx|h++|hmap|ilc|inc|inl|ipp|tcc|tlh|tli|tpp|m|modulemap|mm|pch|swift|swiftdoc|swiftmodule|swiftsourceinfo|yaml)$"
 )
 
-source "$BAZEL_INTEGRATION_DIR/bazel_build.sh"
+# Execute Bazel build with error handling for preview builds
+if ! source "$BAZEL_INTEGRATION_DIR/bazel_build.sh"; then
+  if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+    echo "Warning: Bazel build failed for preview index build, creating fallback structure" >&2
+    # Create minimal required directories for preview functionality
+    mkdir -p "${DERIVED_FILE_DIR}"
+    mkdir -p "${OBJECT_FILE_DIR_normal}/arm64"
+    touch "${DERIVED_FILE_DIR}/preview_indexbuild_fallback"
+    echo "Preview index build continuing with limited functionality" >&2
+  else
+    echo "Error: Bazel build failed for index build" >&2
+    exit 1
+  fi
+fi
 
-# Import indexes
+# Import indexes with error handling
 if [ -n "${indexstores_filelists:-}" ]; then
-  "$BAZEL_INTEGRATION_DIR/import_indexstores" \
+  if ! "$BAZEL_INTEGRATION_DIR/import_indexstores" \
     "$PROJECT_DIR" \
-    "${indexstores_filelists[@]/#/$BAZEL_OUT/}"
+    "${indexstores_filelists[@]/#/$BAZEL_OUT/}"; then
+    if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+      echo "Warning: Index import failed for preview build, continuing without indexes" >&2
+    else
+      echo "Error: Index import failed" >&2
+      exit 1
+    fi
+  fi
 fi

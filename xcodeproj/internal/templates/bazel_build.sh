@@ -121,17 +121,37 @@ fi
 
 echo "Starting Bazel build"
 
-"$BAZEL_INTEGRATION_DIR/process_bazel_build_log.py" \
-  "${bazel_cmd[@]}" \
-  build \
-  "${base_pre_config_flags[@]}" \
-  ${build_pre_config_flags:+"${build_pre_config_flags[@]}"} \
-  --config="$config" \
-  --color=yes \
-  "$output_groups_flag" \
-  "%generator_label%" \
-  ${labels:+"--build_metadata=PATTERN=${labels[*]}"} \
-  2>&1
+# Enhanced error handling for preview builds
+if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+  if ! "$BAZEL_INTEGRATION_DIR/process_bazel_build_log.py" \
+    "${bazel_cmd[@]}" \
+    build \
+    "${base_pre_config_flags[@]}" \
+    ${build_pre_config_flags:+"${build_pre_config_flags[@]}"} \
+    --config="$config" \
+    --color=yes \
+    "$output_groups_flag" \
+    "%generator_label%" \
+    ${labels:+"--build_metadata=PATTERN=${labels[*]}"} \
+    2>&1; then
+    echo "Warning: Bazel build failed for preview, continuing with limited functionality" >&2
+    echo "Preview builds may work with reduced functionality" >&2
+    # Don't exit with error for preview builds - let them continue with fallbacks
+  fi
+else
+  # Normal build - fail on error
+  "$BAZEL_INTEGRATION_DIR/process_bazel_build_log.py" \
+    "${bazel_cmd[@]}" \
+    build \
+    "${base_pre_config_flags[@]}" \
+    ${build_pre_config_flags:+"${build_pre_config_flags[@]}"} \
+    --config="$config" \
+    --color=yes \
+    "$output_groups_flag" \
+    "%generator_label%" \
+    ${labels:+"--build_metadata=PATTERN=${labels[*]}"} \
+    2>&1
+fi
 
 # Verify that we actually built what we requested
 

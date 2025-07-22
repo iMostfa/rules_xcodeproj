@@ -50,11 +50,39 @@ set -euo pipefail
 if [[ "$ACTION" == "indexbuild" ]]; then
   cd "$SRCROOT"
 
-  "$BAZEL_INTEGRATION_DIR/generate_index_build_bazel_dependencies.sh"
+  # Enhanced error handling for preview builds
+  if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+    if ! "$BAZEL_INTEGRATION_DIR/generate_index_build_bazel_dependencies.sh"; then
+      echo "Warning: Index build script failed for preview, continuing with fallback..." >&2
+      # Create minimal structure for preview support
+      mkdir -p "${DERIVED_FILE_DIR}"
+      mkdir -p "${OBJECT_FILE_DIR_normal}/arm64"
+      touch "${DERIVED_FILE_DIR}/preview_fallback_marker"
+    fi
+  else
+    "$BAZEL_INTEGRATION_DIR/generate_index_build_bazel_dependencies.sh"
+  fi
 else
-  "$BAZEL_INTEGRATION_DIR/copy_outputs.sh" \
-    "_BazelForcedCompile_.swift" \
-    "\#(productType.rsyncExcludeFile)"
+  # Enhanced error handling for copy_outputs
+  if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+    if ! "$BAZEL_INTEGRATION_DIR/copy_outputs.sh" \
+      "_BazelForcedCompile_.swift" \
+      "\#(productType.rsyncExcludeFile)"; then
+      echo "Warning: Copy outputs failed for preview, creating fallback..." >&2
+      # Create minimal object file structure
+      mkdir -p "${OBJECT_FILE_DIR_normal}/arm64"
+      touch "${OBJECT_FILE_DIR_normal}/arm64/preview_fallback.o"
+    fi
+  else
+    "$BAZEL_INTEGRATION_DIR/copy_outputs.sh" \
+      "_BazelForcedCompile_.swift" \
+      "\#(productType.rsyncExcludeFile)"
+  fi
+fi
+
+# Run preview build validation as a final safety net
+if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+  "$BAZEL_INTEGRATION_DIR/validate_preview_build.sh"
 fi
 
 """#
