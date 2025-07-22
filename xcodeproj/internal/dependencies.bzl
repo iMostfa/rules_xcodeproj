@@ -11,8 +11,10 @@ _XCODE_PREVIEW_PRODUCT_TYPES = {
     "B": None,  # com.apple.product-type.bundle
     "E": None,  # com.apple.product-type.extensionkit-extension
     "a": None,  # com.apple.product-type.application
+    "d": None,  # com.apple.product-type.library.dynamic
     "e": None,  # com.apple.product-type.app-extension
     "f": None,  # com.apple.product-type.framework
+    "l": None,  # com.apple.product-type.library.static
     "t": None,  # com.apple.product-type.tv-app-extension
     "u": None,  # com.apple.product-type.bundle.unit-test
     "w": None,  # com.apple.product-type.application.watchapp2

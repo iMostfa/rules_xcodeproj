@@ -216,7 +216,7 @@ def _to_xcode_target_outputs(outputs):
         transitive_infoplists = outputs.transitive_infoplists,
     )
 
-# Other
+# Utility
 
 def _dicts_from_xcode_configurations(
         *,
