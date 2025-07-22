@@ -1,4 +1,6 @@
+import Foundation
 import PBXProj
+import ToolCommon
 
 extension Generator {
     struct CreateBuildPhases {
@@ -281,8 +283,8 @@ extension Generator.CreateBuildPhases {
             )
         }
 
-        let libs = consolidatedInputs.librariesToLinkPaths + [
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/16/lib/darwin/libclang_rt.iossim.a"
+                let libs = consolidatedInputs.librariesToLinkPaths + [
+            BazelPath(XcodeUtils.getClangRuntimePath())
         ]
         let librariesToLinkSubIdentifiers = libs.map { bazelPath in
             return (

@@ -183,7 +183,7 @@ extension Generator.CalculatePlatformVariantBuildSettings {
             )
         }
 
-        buildSettings.append(
+                buildSettings.append(
             .init(
                 key: "LIBRARY_SEARCH_PATHS",
                 value: (
@@ -192,7 +192,7 @@ extension Generator.CalculatePlatformVariantBuildSettings {
                             let path = $0.path.split(separator: "/").dropFirst().joined(separator: "/")
                             return "\"$(BAZEL_OUT)/\(path)\""
                         } + [
-                            "\"/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/16/lib/darwin\""
+                            XcodeUtils.getClangLibraryPath()
                         ]
                     )
                     .sorted()
