@@ -80,8 +80,12 @@ def _custom_toolchain_impl(ctx):
         },
     )
 
+    # Get bazel integration files (including cc.dia)
+    bazel_integration_files = ctx.attr._bazel_integration_files.files.to_list()
+
     # First run the symlinking script to set up the toolchain
     ctx.actions.run_shell(
+        inputs = bazel_integration_files,
         outputs = [symlink_toolchain_dir],
         tools = [symlink_script_file],
         mnemonic = "CreateSymlinkToolchain",
@@ -148,6 +152,9 @@ custom_toolchain = rule(
             doc = "Map from stub target to comma-separated list of tool names that should use that stub",
         ),
         "toolchain_name": attr.string(mandatory = True),
+        "_bazel_integration_files": attr.label(
+            default = Label("//xcodeproj/internal/bazel_integration_files:bazel_integration_files"),
+        ),
         "_override_template": attr.label(
             allow_single_file = True,
             default = Label("//xcodeproj/internal/templates:custom_toolchain_override.sh"),

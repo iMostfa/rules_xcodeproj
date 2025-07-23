@@ -33,14 +33,10 @@ if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
     touch "$object_file_dir/preview_validation_placeholder.o"
   fi
   
-  # Check for diagnostic files and create if missing
-  find "$object_file_dir" -name '*.o' | while read -r obj_file; do
-    dia_file="${obj_file%.o}.dia"
-    if [[ ! -f "$dia_file" ]]; then
-      echo "# Preview validation placeholder" > "$dia_file"
-      echo "# Created to prevent diagnostic file warnings" >> "$dia_file"
-    fi
-  done
+  # Note: We intentionally do NOT create .dia files here
+  # Missing .dia files are better than invalid ASCII text ones that cause
+  # "Invalid diagnostics signature" errors in Xcode Previews
+  # Bazel will create proper binary .dia files when needed
   
   # Verify toolchain directory exists
   readonly toolchain_dir="/Users/$(whoami)/Library/Developer/Toolchains/BazelRulesXcodeProj16F6.xctoolchain/usr/bin"
@@ -48,13 +44,8 @@ if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
     echo "Creating toolchain directory for preview support..." >&2
     mkdir -p "$toolchain_dir"
     
-    # Create essential placeholder toolchain files
-    essential_tools=("cc.dia" "clang.dia" "swift.dia")
-    for tool in "${essential_tools[@]}"; do
-      if [[ ! -f "$toolchain_dir/$tool" ]]; then
-        echo "# Toolchain placeholder for preview builds" > "$toolchain_dir/$tool"
-      fi
-    done
+    # Note: We intentionally do NOT create placeholder .dia files
+    # Missing .dia files are better than invalid ASCII text ones
   fi
   
   # Create build marker for preview builds
