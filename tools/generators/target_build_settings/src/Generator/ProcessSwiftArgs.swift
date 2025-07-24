@@ -365,6 +365,7 @@ private let skipSwiftArgs: [Substring: Int] = [
     "-emit-symbol-graph-dir": 2,
 
     // These are fully handled in a `previousArg` check
+    "-emit-objc-header-path": 2,
     "-swift-version": 1,
 
     // We filter out `-Xfrontend`, then add it back only if the current arg
