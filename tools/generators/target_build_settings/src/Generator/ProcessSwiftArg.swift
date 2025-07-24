@@ -83,17 +83,6 @@ extension Generator.ProcessSwiftArg {
             return
         }
 
-        if previousArg == "-emit-objc-header-path" {
-            // Extract header name from the path. The path should be in the format:
-            // <package_bin_dir>/<header_name>
-            // We'll extract just the filename since we don't have package_bin_dir context here
-            let headerName = String(arg.split(separator: "/").last ?? "")
-            if !headerName.isEmpty {
-                buildSettings.append(("SWIFT_OBJC_INTERFACE_HEADER_NAME", headerName))
-            }
-            return
-        }
-
         if arg.hasPrefix("-I") {
             let path = arg.dropFirst(2)
             guard !path.isEmpty else {
