@@ -3,6 +3,24 @@
 set -euo pipefail
 
 passthrough_args=("${@:1}")
+has_objc_flag=false
+has_clang_rt_flag=false
+developer_dir=""
+
+# Check if we already have -ObjC flag
+for arg in "${@:1}"; do
+  if [[ "$arg" == "-ObjC" ]]; then
+    has_objc_flag=true
+  fi
+  if [[ "$arg" == *"clang_rt.ios"* ]]; then
+    has_clang_rt_flag=true
+  fi
+done
+
+# Add -ObjC flag if not already present (for ObjC category support)
+if [[ $has_objc_flag == false ]]; then
+  passthrough_args=("-ObjC" "${passthrough_args[@]}")
+fi
 
 while test $# -gt 0
 do
@@ -27,6 +45,58 @@ do
 
   *.preview-thunk.dylib)
     # Pass through for SwiftUI Preview thunk compilation
+    # Add clang runtime library for @available checks if not already present
+    if [[ $has_clang_rt_flag == false ]]; then
+      # Find the clang version to get the correct runtime library path
+      clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version | head -n1 | sed 's/.*clang-\([0-9][0-9]*\).*/\1/')
+      if [[ -z "$clang_version" ]]; then
+        clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version | head -n1 | sed 's/.* \([0-9][0-9]*\)\.[0-9].*/\1/')
+      fi
+      
+      # Try to find the runtime library
+      runtime_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$clang_version/lib/darwin/libclang_rt.ios.a"
+      if [[ ! -f "$runtime_lib_path" ]]; then
+        # Fallback: search for the library in the toolchain
+        runtime_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang" -name "libclang_rt.ios.a" 2>/dev/null | head -n1)
+      fi
+      
+      if [[ -f "$runtime_lib_path" ]]; then
+        passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
+      else
+        # If we can't find the library, try adding it as a linker flag
+        passthrough_args=("${passthrough_args[@]}" "-lclang_rt.ios")
+      fi
+    fi
+    
+    # TODO: Make this work with custom toolchains
+    exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "${passthrough_args[@]}"
+    ;;
+
+  -o)
+    # This is a real linking operation - use clang like preview-thunk does
+    # Add clang runtime library for @available checks if not already present
+    if [[ $has_clang_rt_flag == false ]]; then
+      # Find the clang version to get the correct runtime library path
+      clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version | head -n1 | sed 's/.*clang-\([0-9][0-9]*\).*/\1/')
+      if [[ -z "$clang_version" ]]; then
+        clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version | head -n1 | sed 's/.* \([0-9][0-9]*\)\.[0-9].*/\1/')
+      fi
+      
+      # Try to find the runtime library
+      runtime_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$clang_version/lib/darwin/libclang_rt.ios.a"
+      if [[ ! -f "$runtime_lib_path" ]]; then
+        # Fallback: search for the library in the toolchain
+        runtime_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang" -name "libclang_rt.ios.a" 2>/dev/null | head -n1)
+      fi
+      
+      if [[ -f "$runtime_lib_path" ]]; then
+        passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
+      else
+        # If we can't find the library, try adding it as a linker flag
+        passthrough_args=("${passthrough_args[@]}" "-lclang_rt.ios")
+      fi
+    fi
+    
     # TODO: Make this work with custom toolchains
     exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "${passthrough_args[@]}"
     ;;
