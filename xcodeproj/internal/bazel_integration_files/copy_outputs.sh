@@ -71,25 +71,33 @@ if [[ "$ACTION" != indexbuild ]]; then
   if [[ -n ${BAZEL_OUTPUTS_PRODUCT:-} ]]; then
     cd "${BAZEL_OUTPUTS_PRODUCT%/*}"
 
-    # Check if _objs directory exists before trying to process it
-    if [[ -d "$PWD/${PRODUCT_NAME}_objs" ]]; then
-      # Symlink .o files from BAZEL_PACKAGE_BIN_DIR to OBJECT_FILE_DIR_normal/arm64
-      find "$PWD/${PRODUCT_NAME}_objs" -name '*.o' -exec sh -c '
-        FILENAME=$(echo "${1}" | sed "s/__SPACE__/ /g")
-        TARGET_FILE="${OBJECT_FILE_DIR_normal}/arm64/$(basename "${FILENAME}" | sed "s/\.swift//")"
-        rm -f "${TARGET_FILE}"
-        cp "$1" "${TARGET_FILE}"
-        chmod 644 "${TARGET_FILE}"
-      ' _ {} \;
-    else
-      # Create placeholder object files for preview builds when _objs doesn't exist
+    # Check for object files in multiple possible directory patterns
+    objs_found=false
+    for objs_dir in "${PRODUCT_NAME}_objs" "_objs" "_objc"; do
+      if [[ -d "$PWD/$objs_dir" ]]; then
+        echo "Found object files in $PWD/$objs_dir" >&2
+        # Symlink .o files from BAZEL_PACKAGE_BIN_DIR to OBJECT_FILE_DIR_normal/arm64
+        find "$PWD/$objs_dir" -name '*.o' -exec sh -c '
+          FILENAME=$(echo "${1}" | sed "s/__SPACE__/ /g")
+          TARGET_FILE="${OBJECT_FILE_DIR_normal}/arm64/$(basename "${FILENAME}" | sed "s/\.swift//")"
+          rm -f "${TARGET_FILE}"
+          cp "$1" "${TARGET_FILE}"
+          chmod 644 "${TARGET_FILE}"
+        ' _ {} \;
+        objs_found=true
+        break
+      fi
+    done
+    
+    if [[ "$objs_found" == false ]]; then
+      # Create placeholder object files for preview builds when no objs directory exists
       if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
-        echo "Warning: ${PRODUCT_NAME}_objs directory not found for preview build, creating placeholder structure" >&2
+        echo "Warning: No object files directory found for preview build, creating placeholder structure" >&2
         mkdir -p "${OBJECT_FILE_DIR_normal}/arm64"
         # Create a minimal placeholder .o file to prevent linking issues
         touch "${OBJECT_FILE_DIR_normal}/arm64/preview_placeholder.o"
       else
-        echo "Warning: ${PRODUCT_NAME}_objs directory not found at $PWD/${PRODUCT_NAME}_objs" >&2
+        echo "Warning: No object files directory found. Checked: ${PRODUCT_NAME}_objs, _objs, _objc in $PWD" >&2
       fi
     fi
 
