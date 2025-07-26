@@ -81,14 +81,6 @@ detect_swift_static_libraries() {
                     swift_libs+=("$arg")
                     echo "Detected Swift/ObjC hybrid library via archive inspection: $arg" >&1
                 fi
-            else
-                # Fallback to filename pattern matching if ar is not available
-                if [[ "$arg" == *"static-"* ]] || [[ "$arg" == *"ios_common"* ]] || \
-                   [[ "$arg" == *"RxSwift"* ]] || [[ "$arg" == *"SnapKit"* ]] || \
-                   [[ "$arg" == *"Lottie"* ]]; then
-                    swift_libs+=("$arg")
-                    echo "Detected Swift library via filename pattern: $arg" >&1
-                fi
             fi
         fi
     done
@@ -252,12 +244,6 @@ for arg in "${@:1}"; do
   fi
   if [[ "$arg" == *"BlocksRuntime"* ]] || [[ "$arg" == "-lBlocksRuntime" ]]; then
     has_blocks_rt_flag=true
-  fi
-  
-  # Detect merged static libraries that need force-loading
-  if [[ "$arg" == *"static-"*"_dig"* ]] || [[ "$arg" == *"static-"*"_common"* ]]; then
-    merged_static_libs+=("$arg")
-    echo "Detected merged static library: $arg" >&1
   fi
 done
 
