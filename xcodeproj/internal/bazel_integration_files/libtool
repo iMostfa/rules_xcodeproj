@@ -2,18 +2,62 @@
 
 set -euo pipefail
 
+# === Persistent trace so we can verify wrapper execution ===
+log_root="${BAZEL_OUT:-$TMPDIR}"
+mkdir -p "$log_root" 2>/dev/null || true
+echo "[libtool wrapper] $(date '+%Y-%m-%d %H:%M:%S')  $0  $*" >> "$log_root/libtool_wrapper.log"
+# === End trace ===
+
 original_args=("$@")
+filtered_args=()
+developer_dir=""
+
+# First pass: filter out problematic -D flags and build filtered_args
+for arg in "$@"; do
+    case "$arg" in
+        -D)
+            # Skip this flag entirely - it's not valid for Apple's libtool
+            echo "[libtool wrapper] Filtering out unsupported -D flag" >> "$log_root/libtool_wrapper.log"
+            ;;
+        *)
+            filtered_args+=("$arg")
+            ;;
+    esac
+done
+
+echo "[libtool wrapper] Filtered args: ${filtered_args[*]}" >> "$log_root/libtool_wrapper.log"
+
+# Second pass: process filtered arguments with original logic
+set -- "${filtered_args[@]}"
 
 while test $# -gt 0
 do
   case $1 in
   -V)
     # Xcode 15+ needs to know the version of libtool
-    exec libtool "${original_args[@]}"
+    exec libtool "${filtered_args[@]}"
     ;;
   *_dependency_info.dat)
     printf "\0 \0" > "$1"
     break
+    ;;
+  -syslibroot)
+    shift
+    # Extract developer dir from sysroot path (similar to ld wrapper)
+    developer_dir="${1/\/Platforms\/*/}"
+    echo "[libtool wrapper] Extracted developer_dir: $developer_dir" >> "$log_root/libtool_wrapper.log"
+    ;;
+  -o)
+    shift
+    # This is static library creation - pass through to real libtool
+    if [[ -n "$developer_dir" ]]; then
+      echo "[libtool wrapper] Using Xcode libtool: $developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool" >> "$log_root/libtool_wrapper.log"
+      exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool" "${filtered_args[@]}"
+    else
+      echo "[libtool wrapper] Using system libtool" >> "$log_root/libtool_wrapper.log"
+      # Fallback to system libtool
+      exec libtool "${filtered_args[@]}"
+    fi
     ;;
   esac
 

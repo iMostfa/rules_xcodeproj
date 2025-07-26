@@ -3,10 +3,18 @@
 set -euo pipefail
 
 # Debug logging for preview builds - using stderr for sandbox compatibility
-echo "=== LD SCRIPT CALLED: $(date) ===" >&2
-echo "Arguments: $*" >&2
-echo "PWD: $PWD" >&2
-echo "ENABLE_PREVIEWS: ${ENABLE_PREVIEWS:-not_set}" >&2
+echo "=== LD SCRIPT CALLED: $(date) ===" >&1
+echo "Arguments: $*" >&1
+echo "PWD: $PWD" >&1
+echo "ENABLE_PREVIEWS: ${ENABLE_PREVIEWS:-not_set}" >&1
+
+# === Persistent trace so we can verify wrapper execution even if stderr is swallowed ===
+# Choose a path inside Bazel’s output tree if available, otherwise fallback to $TMPDIR.
+log_root="${BAZEL_OUT:-$TMPDIR}"
+# Ensure directory exists (ignore errors if TMPDIR already exists).
+mkdir -p "$log_root" 2>/dev/null || true
+echo "[ld wrapper] $(date '+%Y-%m-%d %H:%M:%S')  $0  $*" >> "$log_root/ld_wrapper.log"
+# === End trace ===
 
 passthrough_args=("${@:1}")
 has_objc_flag=false
@@ -14,8 +22,10 @@ has_clang_rt_flag=false
 has_force_load_flag=false
 has_blocks_rt_flag=false
 developer_dir=""
+platform_name=""
 
-# Check if we already have required flags
+# Check if we already have required flags and identify merged static libraries
+merged_static_libs=()
 for arg in "${@:1}"; do
   if [[ "$arg" == "-ObjC" ]]; then
     has_objc_flag=true
@@ -29,85 +39,105 @@ for arg in "${@:1}"; do
   if [[ "$arg" == *"BlocksRuntime"* ]] || [[ "$arg" == "-lBlocksRuntime" ]]; then
     has_blocks_rt_flag=true
   fi
+  
+  # Detect merged static libraries that need force-loading
+  if [[ "$arg" == *"static-"*"_dig"* ]] || [[ "$arg" == *"static-"*"_common"* ]]; then
+    merged_static_libs+=("$arg")
+    echo "Detected merged static library: $arg" >&1
+  fi
 done
 
 # Add -ObjC flag if not already present (for ObjC category support)
 if [[ $has_objc_flag == false ]]; then
   passthrough_args=("-ObjC" "${passthrough_args[@]}")
-  echo "Added -ObjC flag" >&2
+  echo "Added -ObjC flag" >&1
 fi
 
 # Function to add runtime libraries for preview builds
 add_runtime_libraries() {
   local preview_mode="$1"
-  echo "add_runtime_libraries called with preview_mode: $preview_mode" >&2
+  echo "add_runtime_libraries called with preview_mode: $preview_mode" >&1
   
   # Add clang runtime library for @available checks
   if [[ $has_clang_rt_flag == false && -n "$developer_dir" ]]; then
-    echo "Searching for clang runtime library..." >&2
+    echo "Searching for clang runtime library..." >&1
     
     # Try multiple strategies to find clang runtime library
     clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version 2>/dev/null | head -n1 | sed 's/.*clang-\([0-9][0-9]*\).*/\1/' || echo "")
     if [[ -z "$clang_version" ]]; then
       clang_version=$("$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" --version 2>/dev/null | head -n1 | sed 's/.* \([0-9][0-9]*\)\.[0-9].*/\1/' || echo "")
     fi
-    echo "Detected clang version: $clang_version" >&2
+    echo "Detected clang version: $clang_version" >&1
     
     # Strategy 1: Use versioned path
     if [[ -n "$clang_version" ]]; then
-      runtime_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$clang_version/lib/darwin/libclang_rt.ios.a"
-      echo "Trying runtime library path: $runtime_lib_path" >&2
+      # Use simulator-specific runtime library for simulator builds
+      if [[ "${platform_name:-iphoneos}" == "iphonesimulator" ]]; then
+        runtime_lib_name="libclang_rt.iossim.a"
+      else
+        runtime_lib_name="libclang_rt.ios.a"
+      fi
+      runtime_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$clang_version/lib/darwin/$runtime_lib_name"
+      echo "Trying runtime library path: $runtime_lib_path (platform: ${platform_name:-iphoneos})" >&1
       if [[ -f "$runtime_lib_path" ]]; then
         passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
         has_clang_rt_flag=true
-        echo "SUCCESS: Added clang runtime library: $runtime_lib_path" >&2
+        echo "SUCCESS: Added clang runtime library: $runtime_lib_path" >&1
       else
-        echo "FAILED: Runtime library not found at: $runtime_lib_path" >&2
+        echo "FAILED: Runtime library not found at: $runtime_lib_path" >&1
       fi
     fi
     
     # Strategy 2: Search for the library
     if [[ $has_clang_rt_flag == false ]]; then
-      echo "Searching for clang runtime library in toolchain..." >&2
-      runtime_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang" -name "libclang_rt.ios.a" 2>/dev/null | head -n1)
-      echo "Search result: $runtime_lib_path" >&2
+      echo "Searching for clang runtime library in toolchain..." >&1
+      # Use the same platform-specific library name from Strategy 1
+      runtime_lib_name="${runtime_lib_name:-libclang_rt.ios.a}"
+      runtime_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang" -name "$runtime_lib_name" 2>/dev/null | head -n1)
+      echo "Search result: $runtime_lib_path" >&1
       if [[ -n "$runtime_lib_path" && -f "$runtime_lib_path" ]]; then
         passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
         has_clang_rt_flag=true
-        echo "SUCCESS: Found and added clang runtime library: $runtime_lib_path" >&2
+        echo "SUCCESS: Found and added clang runtime library: $runtime_lib_path" >&1
       else
-        echo "FAILED: Runtime library not found via search" >&2
+        echo "FAILED: Runtime library not found via search" >&1
       fi
     fi
     
     # Strategy 3: Try linker flag as fallback
     if [[ $has_clang_rt_flag == false ]]; then
-      passthrough_args=("${passthrough_args[@]}" "-lclang_rt.ios")
-      echo "FALLBACK: Added -lclang_rt.ios linker flag" >&2
+      # Use platform-specific linker flag
+      if [[ "${platform_name:-iphoneos}" == "iphonesimulator" ]]; then
+        runtime_flag="-lclang_rt.iossim"
+      else
+        runtime_flag="-lclang_rt.ios"
+      fi
+      passthrough_args=("${passthrough_args[@]}" "$runtime_flag")
+      echo "FALLBACK: Added $runtime_flag linker flag" >&1
     fi
   fi
   
   # Add blocks runtime library for block helper functions
   if [[ $has_blocks_rt_flag == false && "$preview_mode" == "true" && -n "$developer_dir" ]]; then
-    echo "Searching for BlocksRuntime library..." >&2
+    echo "Searching for BlocksRuntime library..." >&1
     
     # Try to find BlocksRuntime library
     blocks_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/libBlocksRuntime.a"
-    echo "Trying blocks library path: $blocks_lib_path" >&2
+    echo "Trying blocks library path: $blocks_lib_path" >&1
     if [[ -f "$blocks_lib_path" ]]; then
       passthrough_args=("${passthrough_args[@]}" "$blocks_lib_path")
-      echo "SUCCESS: Added BlocksRuntime library: $blocks_lib_path" >&2
+      echo "SUCCESS: Added BlocksRuntime library: $blocks_lib_path" >&1
     else
       # Search for it
       blocks_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib" -name "libBlocksRuntime*" 2>/dev/null | head -n1)
-      echo "Search result: $blocks_lib_path" >&2
+      echo "Search result: $blocks_lib_path" >&1
       if [[ -n "$blocks_lib_path" && -f "$blocks_lib_path" ]]; then
         passthrough_args=("${passthrough_args[@]}" "$blocks_lib_path")
-        echo "SUCCESS: Found and added BlocksRuntime library: $blocks_lib_path" >&2
+        echo "SUCCESS: Found and added BlocksRuntime library: $blocks_lib_path" >&1
       else
         # Try as linker flag
         passthrough_args=("${passthrough_args[@]}" "-lBlocksRuntime")
-        echo "FALLBACK: Added -lBlocksRuntime linker flag" >&2
+        echo "FALLBACK: Added -lBlocksRuntime linker flag" >&1
       fi
     fi
   fi
@@ -116,39 +146,54 @@ add_runtime_libraries() {
 # Function to add Swift linking support for cross-module dependencies
 add_swift_linking_support() {
   local preview_mode="$1"
-  echo "add_swift_linking_support called with preview_mode: $preview_mode" >&2
+  echo "add_swift_linking_support called with preview_mode: $preview_mode" >&1
   
   # For SwiftUI Previews, we need to ensure all Swift modules are force-loaded
   # to make protocol witness tables and type metadata available at runtime
   if [[ "$preview_mode" == "true" ]]; then
-    echo "Adding Swift preview linking support..." >&2
+    echo "Adding Swift preview linking support..." >&1
     
     # Add flags to support Swift cross-module dependencies in JIT environment
-    passthrough_args=("${passthrough_args[@]}" 
-      "-Wl,-all_load"  # Force load all static libraries (Swift modules)
-      "-lswiftCore"    # Ensure Swift runtime is linked
-      "-lswiftFoundation"  # Foundation Swift overlay
-      "-lswiftUIKit"   # UIKit Swift overlay (if available)
-      "-lswiftObjectiveC"  # ObjC bridging support
+    # 1. Ensure -all_load is the *first* linker flag so it applies to every
+    #    static archive that follows.  We only prepend it if it isn’t already
+    #    present so repeated calls don’t duplicate the flag.
+    if [[ " ${passthrough_args[*]} " != *" -Wl,-all_load "* ]]; then
+      passthrough_args=("-Wl,-all_load" "${passthrough_args[@]}")
+    fi
+
+    # 2. Append the rest of the Swift-specific runtime flags/libraries.
+    passthrough_args+=(
+      "-Wl,-export_dynamic"  # Export all symbols for JIT runtime discovery
+      "-lswiftCore"          # Ensure Swift runtime is linked
+      "-lswiftFoundation"    # Foundation Swift overlay
+      "-lswiftUIKit"         # UIKit Swift overlay (if available)
+      "-lswiftObjectiveC"    # ObjC ↔︎ Swift bridging support
     )
-    echo "Added Swift runtime libraries" >&2
+    echo "Added Swift runtime libraries" >&1
+    echo "Added -export_dynamic for preview symbol export" >&1
     
     # Try to find and force-load Swift runtime libraries
     if [[ -n "$developer_dir" ]]; then
-      swift_lib_dir="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos"
-      echo "Checking Swift lib directory: $swift_lib_dir" >&2
+      # Use detected platform name instead of hardcoded iphoneos
+      swift_platform_name="${platform_name:-iphoneos}"
+      swift_lib_dir="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$swift_platform_name"
+      echo "Checking Swift lib directory: $swift_lib_dir (platform: $swift_platform_name)" >&1
       if [[ -d "$swift_lib_dir" ]]; then
         # Add Swift stdlib path for runtime linking
         passthrough_args=("${passthrough_args[@]}" "-L$swift_lib_dir")
-        echo "Added Swift stdlib path: $swift_lib_dir" >&2
+        echo "Added Swift stdlib path: $swift_lib_dir" >&1
+        
+        # Add explicit rpath for Swift runtime libraries
+        passthrough_args=("${passthrough_args[@]}" "-Wl,-rpath,$swift_lib_dir")
+        echo "Added Swift runtime rpath: $swift_lib_dir" >&1
         
         # For preview builds, try to find and link RxSwift specifically if available
         if [[ -d "$swift_lib_dir/../../../lib" ]]; then
           passthrough_args=("${passthrough_args[@]}" "-L$swift_lib_dir/../../../lib")
-          echo "Added additional Swift lib path: $swift_lib_dir/../../../lib" >&2
+          echo "Added additional Swift lib path: $swift_lib_dir/../../../lib" >&1
         fi
       else
-        echo "Swift lib directory not found: $swift_lib_dir" >&2
+        echo "Swift lib directory not found: $swift_lib_dir" >&1
       fi
     fi
     
@@ -157,7 +202,26 @@ add_swift_linking_support() {
       "-Wl,-rpath,@loader_path/Frameworks"  # Ensure framework resolution
       "-Wl,-rpath,@executable_path/Frameworks"  # Alternative framework path
     )
-    echo "Added additional Swift linking flags" >&2
+    echo "Added additional Swift linking flags" >&1
+  fi
+}
+
+# Function to force-load merged static libraries for preview builds
+force_load_merged_static_libs() {
+  local preview_mode="$1"
+  echo "force_load_merged_static_libs called with preview_mode: $preview_mode" >&1
+  
+  if [[ "$preview_mode" == "true" && ${#merged_static_libs[@]} -gt 0 ]]; then
+    echo "Force-loading ${#merged_static_libs[@]} merged static libraries for preview build..." >&1
+    
+    for lib in "${merged_static_libs[@]}"; do
+      if [[ -f "$lib" ]]; then
+        passthrough_args=("${passthrough_args[@]}" "-Wl,-force_load,$lib")
+        echo "Force-loaded merged static library: $lib" >&1
+      else
+        echo "WARNING: Merged static library not found: $lib" >&1
+      fi
+    done
   fi
 }
 
@@ -165,13 +229,13 @@ while test $# -gt 0
 do
   case $1 in
   -version_details)
-    echo "Handling -version_details" >&2
+    echo "Handling -version_details" >&1
     # Pass through for version details
     exec "$(xcrun --find ld)" -version_details
     ;;
 
   *_dependency_info.dat)
-    echo "Handling dependency info: $1" >&2
+    echo "Handling dependency info: $1" >&1
     ld_version=$(ld -v 2>&1 | grep ^@)
     printf "\0%s\0" "$ld_version" > "$1"
     break
@@ -182,11 +246,21 @@ do
     # PATH/DEVELOPER_DIR isn't set when this is called, so we need to calculate
     # the developer dir from the sysroot to invoke clang (used below)
     developer_dir="${1/\/Platforms\/*/}"
-    echo "Set developer_dir: $developer_dir" >&2
+    
+    # Detect platform dynamically from sysroot path
+    if [[ "$1" == *"/Platforms/"* ]]; then
+      platform_name=$(basename "$(dirname "$(dirname "$1")")")
+      echo "Detected platform: $platform_name from sysroot: $1" >&1
+    else
+      platform_name="iphoneos"  # fallback
+      echo "Using fallback platform: $platform_name" >&1
+    fi
+    
+    echo "Set developer_dir: $developer_dir" >&1
     ;;
 
   *.preview-thunk.dylib)
-    echo "PREVIEW THUNK DETECTED: $1" >&2
+    echo "PREVIEW THUNK DETECTED: $1" >&1
     # Pass through for SwiftUI Preview thunk compilation
     
     # Add runtime libraries for preview thunks
@@ -195,20 +269,23 @@ do
     # Add Swift linking support for preview thunks
     add_swift_linking_support "true"
     
-    echo "Final passthrough_args for preview thunk: ${passthrough_args[*]}" >&2
+    # Force-load merged static libraries for preview thunks
+    force_load_merged_static_libs "true"
+    
+    echo "Final passthrough_args for preview thunk: ${passthrough_args[*]}" >&1
     
     # TODO: Make this work with custom toolchains
     exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "${passthrough_args[@]}"
     ;;
 
   -o)
-    echo "Output linking detected: $2" >&2
+    echo "Output linking detected: $2" >&1
     # This is a real linking operation - use clang like preview-thunk does
     # Check if this is a preview build by looking at environment or output path
     is_preview_build=false
     if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]] || [[ "$2" == *"preview"* ]] || [[ "$2" == *"Preview"* ]]; then
       is_preview_build=true
-      echo "Detected preview build" >&2
+      echo "Detected preview build" >&1
     fi
     
     # Add runtime libraries
@@ -219,7 +296,12 @@ do
       add_swift_linking_support "true"
     fi
     
-    echo "Final passthrough_args for output linking: ${passthrough_args[*]}" >&2
+    # Force-load merged static libraries for preview builds
+    if [[ "$is_preview_build" == "true" ]]; then
+      force_load_merged_static_libs "true"
+    fi
+    
+    echo "Final passthrough_args for output linking: ${passthrough_args[*]}" >&1
     
     # TODO: Make this work with custom toolchains
     exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "${passthrough_args[@]}"
@@ -228,4 +310,4 @@ do
   shift
 done
 
-echo "=== LD SCRIPT COMPLETED: $(date) ===" >&2
+echo "=== LD SCRIPT COMPLETED: $(date) ===" >&1

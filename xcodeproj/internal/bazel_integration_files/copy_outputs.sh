@@ -104,7 +104,8 @@ if [[ "$ACTION" != indexbuild ]]; then
     if [[ -f "$BAZEL_OUTPUTS_PRODUCT_BASENAME" ]]; then
       # Product is a binary, so symlink instead of rsync, to allow for Bazel-set
       # rpaths to work
-      ln -sfh "$PWD/$BAZEL_OUTPUTS_PRODUCT_BASENAME" "$TARGET_BUILD_DIR/lib$PRODUCT_NAME.a"
+      source_extension="${BAZEL_OUTPUTS_PRODUCT_BASENAME##*.}"
+      ln -sfh "$PWD/$BAZEL_OUTPUTS_PRODUCT_BASENAME" "$TARGET_BUILD_DIR/lib$PRODUCT_NAME.$source_extension"
     else
       # Product is a bundle
       # NOTE: use `which` to find the path to `rsync`.
