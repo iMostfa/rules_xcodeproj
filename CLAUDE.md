@@ -82,6 +82,21 @@ build --override_repository=rules_xcodeproj=/path/to/rules_xcodeproj
 - `test/` - Unit tests for internal functionality
 - Python test files use unittest framework (e.g., `tools/params_processors/*_tests.py`)
 
+## Performance Considerations
+
+### Known Performance Issues
+- **CreateSymlinkToolchain bottleneck**: The custom toolchain creation step takes 30+ seconds due to:
+  - Massive filesystem scan of entire Xcode toolchain directory (~50,000 files)
+  - Sequential symlink creation without parallelization
+  - Inefficient retry logic overhead
+  - See `docs/performance/toolchain-optimization-plan.md` for detailed optimization strategy
+
+### Future Optimization Work
+- Parallel processing implementation could provide 5-8x improvement
+- Caching mechanism could provide 10-20x improvement for subsequent builds
+- Incremental updates could provide 50-100x improvement for override-only changes
+- Full implementation roadmap available in performance documentation
+
 ## Notes
 - Swift tools use ArgumentParser and OrderedCollections dependencies
 - Most code generation happens via Swift executables rather than Starlark
