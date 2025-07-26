@@ -8,6 +8,7 @@ mkdir -p "$log_root" 2>/dev/null || true
 echo "[libtool wrapper] $(date '+%Y-%m-%d %H:%M:%S')  $0  $*" >> "$log_root/libtool_wrapper.log"
 # === End trace ===
 
+
 original_args=("$@")
 filtered_args=()
 static_archives=()        # ← collect .a inputs for later analysis
