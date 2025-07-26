@@ -183,24 +183,31 @@ extension Generator.CalculatePlatformVariantBuildSettings {
             )
         }
 
-        // Only add target-specific library search paths, not the shared clang library path
+        // Only add target-specific library search paths for preview builds to avoid ARG_MAX issues
+        // Regular builds can find libraries through normal Bazel linking mechanisms
         if !platformVariant.librarySearchPaths.isEmpty {
-            buildSettings.append(
-                .init(
-                    key: "LIBRARY_SEARCH_PATHS",
-                    value: (
-                        ["$(inherited)"] +
-                        platformVariant.librarySearchPaths
-                            .map {
-                                let path = $0.path.split(separator: "/").dropFirst().joined(separator: "/")
-                                return "\"$(BAZEL_OUT)/\(path)\""
-                            }
+            // Only generate LIBRARY_SEARCH_PATHS for preview builds to avoid "Argument list too long" errors
+            // Regular builds work fine without these explicit paths
+            let isPreviewBuild = ProcessInfo.processInfo.environment["ENABLE_PREVIEWS"] == "YES"
+            
+            if isPreviewBuild {
+                buildSettings.append(
+                    .init(
+                        key: "LIBRARY_SEARCH_PATHS",
+                        value: (
+                            ["$(inherited)"] +
+                            platformVariant.librarySearchPaths
+                                .map {
+                                    let path = $0.path.split(separator: "/").dropFirst().joined(separator: "/")
+                                    return "\"$(BAZEL_OUT)/\(path)\""
+                                }
+                        )
+                        .sorted()
+                        .joined(separator: " ")
+                        .pbxProjEscaped
                     )
-                    .sorted()
-                    .joined(separator: " ")
-                    .pbxProjEscaped
                 )
-            )
+            }
         }
 
         buildSettings.append(contentsOf: platformVariant.buildSettingsFromFile)
