@@ -69,6 +69,9 @@ def _process_linkopts(
     processed_linkopts = []
     def _quote_and_append_processed_linkopt(opt):
         processed_linkopts.append(_quote_if_needed(opt))
+    
+    # Check if -ObjC flag is already present
+    has_objc_flag = "-ObjC" in linkopts
 
     last_opt = None
     def _process_linkopt(opt):
@@ -139,6 +142,10 @@ def _process_linkopts(
 
         _process_linkopt(linkopt)
         last_opt = linkopt
+
+    # Add -ObjC flag if not already present (for ObjC category support)
+    if not has_objc_flag:
+        processed_linkopts.insert(0, "-ObjC")
 
     return processed_linkopts
 
