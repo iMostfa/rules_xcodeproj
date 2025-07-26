@@ -10,7 +10,11 @@ echo "[libtool wrapper] $(date '+%Y-%m-%d %H:%M:%S')  $0  $*" >> "$log_root/libt
 
 original_args=("$@")
 filtered_args=()
+static_archives=()        # ← collect .a inputs for later analysis
 developer_dir=""
+output_file=""
+# Preview detection flag
+is_preview=false
 
 # First pass: filter out problematic -D flags and build filtered_args
 for arg in "$@"; do
@@ -19,11 +23,22 @@ for arg in "$@"; do
             # Skip this flag entirely - it's not valid for Apple's libtool
             echo "[libtool wrapper] Filtering out unsupported -D flag" >> "$log_root/libtool_wrapper.log"
             ;;
+        *.a)
+            static_archives+=("$arg")        # record archive
+            filtered_args+=("$arg")
+            ;;
+        *.preview-thunk.*)
+            is_preview=true                   # signal from thunk object
+            filtered_args+=("$arg")
+            ;;
         *)
             filtered_args+=("$arg")
             ;;
     esac
 done
+
+# Also honour ENABLE_PREVIEWS environment flag
+[[ "${ENABLE_PREVIEWS:-}" == "YES" ]] && is_preview=true
 
 echo "[libtool wrapper] Filtered args: ${filtered_args[*]}" >> "$log_root/libtool_wrapper.log"
 
@@ -49,17 +64,51 @@ do
     ;;
   -o)
     shift
-    # This is static library creation - pass through to real libtool
-    if [[ -n "$developer_dir" ]]; then
-      echo "[libtool wrapper] Using Xcode libtool: $developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool" >> "$log_root/libtool_wrapper.log"
-      exec "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool" "${filtered_args[@]}"
-    else
-      echo "[libtool wrapper] Using system libtool" >> "$log_root/libtool_wrapper.log"
-      # Fallback to system libtool
-      exec libtool "${filtered_args[@]}"
-    fi
-    ;;
+    output_file="$1"               # remember final static archive path
+    ;;                              # defer execution until after loop
   esac
 
   shift
 done
+
+# === Build extra preview arguments ===
+extra_args=()
+if [[ "$is_preview" == "true" ]]; then
+  echo "[libtool wrapper] Preview mode detected – augmenting args" >> "$log_root/libtool_wrapper.log"
+  for lib in "${static_archives[@]}"; do
+    if /usr/bin/grep -q "__swift5" <(ar -t "$lib" 2>/dev/null); then
+      extra_args+=("-all_load" "$lib")
+    fi
+  done
+  # Locate clang runtime for ___isPlatformVersionAtLeast
+  sdk_suffix="ios"
+  [[ "${filtered_args[*]}" == *iphonesimulator* ]] && sdk_suffix="iossim"
+  clang_rt=$(xcrun --sdk iphonesimulator --show-sdk-platform-path 2>/dev/null)/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang
+  clang_rt=$(find "$clang_rt" -name "libclang_rt.${sdk_suffix}.a" 2>/dev/null | head -n1)
+  if [[ -f "$clang_rt" ]]; then
+    extra_args+=("-all_load" "$clang_rt")
+    echo "[libtool wrapper] Added clang runtime: $clang_rt" >> "$log_root/libtool_wrapper.log"
+  fi
+fi
+
+# Choose the real libtool binary
+real_libtool="libtool"
+[[ -n "$developer_dir" ]] && real_libtool="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/libtool"
+
+# Safe array expansion to avoid unbound variable errors in bash strict mode
+echo "[libtool wrapper] EXEC: $real_libtool ${filtered_args[*]}${extra_args[*]:+ ${extra_args[*]}}" >> "$log_root/libtool_wrapper.log"
+# Safe array expansion: only expand extra_args if it has elements
+if [[ ${#extra_args[@]} -gt 0 ]]; then
+    "$real_libtool" "${filtered_args[@]}" "${extra_args[@]}"
+else
+    "$real_libtool" "${filtered_args[@]}"
+fi
+status=$?
+
+# Re-ranlib to refresh TOC for JIT symbol discovery
+if [[ "$is_preview" == "true" && -n "$output_file" && -f "$output_file" ]]; then
+  /usr/bin/ranlib -no_warning_for_no_symbols "$output_file"
+  echo "[libtool wrapper] ranlib refreshed TOC of $output_file" >> "$log_root/libtool_wrapper.log"
+fi
+
+exit $status
