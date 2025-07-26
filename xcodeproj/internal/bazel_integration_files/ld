@@ -8,6 +8,220 @@ echo "Arguments: $*" >&1
 echo "PWD: $PWD" >&1
 echo "ENABLE_PREVIEWS: ${ENABLE_PREVIEWS:-not_set}" >&1
 
+# Enhanced preview helper functions (integrated directly for reliability)
+
+# Enhanced multi-signal preview detection with early-exit optimization
+detect_preview_build() {
+    local is_preview=false
+    
+    # Signal 1: Environment variable
+    if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]]; then
+        is_preview=true
+        echo "$is_preview"
+        return
+    fi
+    
+    # Signal 2: Swift preview-specific linker flags (Xcode 15+)
+    for arg in "$@"; do
+        if [[ "$arg" == "-swift-allow-older-dylib" ]]; then
+            is_preview=true
+            echo "$is_preview"
+            return
+        fi
+    done
+    
+    # Signal 3: Output path patterns
+    for arg in "$@"; do
+        if [[ "$arg" == *"preview"* ]] || [[ "$arg" == *"Preview"* ]] || [[ "$arg" == *".preview-thunk.dylib" ]]; then
+            is_preview=true
+            echo "$is_preview"
+            return
+        fi
+    done
+    
+    # Signal 4: SwiftPM preview thunk environment
+    if [[ "${LLVM_TARGET_TRIPLE_SUFFIX:-}" == "preview_thunk" ]]; then
+        is_preview=true
+        echo "$is_preview"
+        return
+    fi
+    
+    # Signal 5: Xcode build settings
+    if [[ "${SWIFT_ENABLE_PREVIEWS:-}" == "YES" ]] || [[ "${XCODE_PREVIEWS_ENABLED:-}" == "YES" ]]; then
+        is_preview=true
+        echo "$is_preview"
+        return
+    fi
+    
+    # Signal 6: Build configuration (with false positive guard for CI)
+    if [[ "${CONFIGURATION:-}" == *"Preview"* ]] || [[ "${BUILD_VARIANTS:-}" == *"preview"* ]]; then
+        # Guard against false positives for CI environments
+        if [[ "${ACTION:-}" == "build" ]] && [[ "${RUN_DESTINATION:-}" == *"Simulator"* ]] && [[ "${RUN_DESTINATION:-}" == *"Preview"* ]]; then
+            is_preview=true
+        fi
+    fi
+    
+    echo "$is_preview"
+}
+
+# Detect static libraries containing Swift metadata using archive inspection
+detect_swift_static_libraries() {
+    local swift_libs=()
+    
+    for arg in "$@"; do
+        # Only check files that could be static libraries
+        if [[ -f "$arg" ]] && [[ "$arg" == *.a ]]; then
+            # Use archive inspection to detect Swift metadata (more reliable than filename patterns)
+            if command -v ar >/dev/null 2>&1; then
+                # Check for Swift metadata OR ObjC classes (Swift-wrapped ObjC)
+                if ar -t "$arg" 2>/dev/null | grep -q "__swift5" || \
+                   /usr/bin/grep -q "__swift5" <(ar -t "$arg" 2>/dev/null) || \
+                   ar -t "$arg" 2>/dev/null | grep -q "_OBJC_CLASS_" || \
+                   ar -t "$arg" 2>/dev/null | grep -q "_OBJC_METACLASS_"; then
+                    swift_libs+=("$arg")
+                    echo "Detected Swift/ObjC hybrid library via archive inspection: $arg" >&1
+                fi
+            else
+                # Fallback to filename pattern matching if ar is not available
+                if [[ "$arg" == *"static-"* ]] || [[ "$arg" == *"ios_common"* ]] || \
+                   [[ "$arg" == *"RxSwift"* ]] || [[ "$arg" == *"SnapKit"* ]] || \
+                   [[ "$arg" == *"Lottie"* ]]; then
+                    swift_libs+=("$arg")
+                    echo "Detected Swift library via filename pattern: $arg" >&1
+                fi
+            fi
+        fi
+    done
+    
+    echo "${swift_libs[@]}"
+}
+
+# Apply Swift runtime configuration to all preview builds
+setup_swift_runtime_for_previews() {
+    local is_preview="$1"
+    
+    if [[ "$is_preview" == "true" ]]; then
+        echo "Setting up Swift runtime for preview build..." >&1
+        
+        # CRITICAL: Add -all_load at the VERY BEGINNING to ensure it applies to all archives
+        # This must be the first thing we add to ensure proper argument ordering
+        if [[ " ${passthrough_args[*]} " != *" -Wl,-all_load "* ]]; then
+            passthrough_args=("-Wl,-all_load" "${passthrough_args[@]}")
+            echo "Added -all_load at beginning of command line" >&1
+        fi
+        
+        # Export all symbols for JIT (with dead strip protection)
+        passthrough_args+=("-Wl,-export_dynamic")
+        # Prevent hitting 50k dylib symbol limit by keeping unused dependencies stripped
+        passthrough_args+=("-Wl,-dead_strip_dylibs")
+        echo "Added symbol export with dead strip protection" >&1
+        
+        # Add Swift runtime libraries
+        passthrough_args+=(
+            "-lswiftCore"
+            "-lswiftFoundation"
+            "-lswiftUIKit"
+            "-lswiftObjectiveC"
+            "-lswiftSwiftOnoneSupport"  # For preview builds
+        )
+        echo "Added Swift runtime libraries" >&1
+        
+        # Add Swift runtime paths (with Intel/Rosetta support)
+        if [[ -n "${developer_dir:-}" ]]; then
+            # Use xcrun to find paths robustly across Xcode versions
+            local swift_toolchain_dir
+            if swift_toolchain_dir=$(xcrun --sdk "${SDKROOT:-iphoneos}" --show-sdk-path 2>/dev/null | sed 's|/SDKs/.*|/Toolchains/XcodeDefault.xctoolchain|'); then
+                
+                if [[ -d "$swift_toolchain_dir" ]]; then
+                    # Primary platform-specific path
+                    local swift_lib_dir="$swift_toolchain_dir/usr/lib/swift/${platform_name:-iphoneos}"
+                    if [[ -d "$swift_lib_dir" ]]; then
+                        passthrough_args+=("-L$swift_lib_dir" "-Wl,-rpath,$swift_lib_dir")
+                        echo "Added Swift runtime path: $swift_lib_dir" >&1
+                    fi
+                    
+                    # Additional path for Intel/Rosetta builds (Cursor's feedback)
+                    if [[ "${platform_name:-iphoneos}" == "iphonesimulator" ]]; then
+                        local macos_swift_lib_dir="$swift_toolchain_dir/usr/lib/swift/macosx"
+                        if [[ -d "$macos_swift_lib_dir" ]]; then
+                            passthrough_args+=("-L$macos_swift_lib_dir" "-Wl,-rpath,$macos_swift_lib_dir")
+                            echo "Added Intel/Rosetta Swift runtime path: $macos_swift_lib_dir" >&1
+                        fi
+                    fi
+                fi
+            else
+                echo "Warning: Could not determine Swift toolchain directory" >&1
+            fi
+        fi
+        
+        # Add framework search paths
+        passthrough_args+=(
+            "-Wl,-rpath,@loader_path/Frameworks"
+            "-Wl,-rpath,@executable_path/Frameworks"
+        )
+        echo "Added framework search paths" >&1
+    fi
+}
+
+# Apply selective force-loading to avoid duplicate symbol issues
+force_load_swift_libraries() {
+    local is_preview="$1"
+    shift
+    local swift_libraries=("$@")
+    
+    if [[ "$is_preview" == "true" ]]; then
+        echo "Applying selective force-loading for ${#swift_libraries[@]} Swift libraries..." >&1
+        
+        # Use selective force-loading instead of global -all_load to avoid duplicate symbols
+        for lib in "${swift_libraries[@]}"; do
+            if [[ -f "$lib" ]]; then
+                passthrough_args+=("-Wl,-force_load,$lib")
+                echo "Force-loading Swift library: $lib" >&1
+            else
+                echo "Warning: Swift library not found: $lib" >&1
+            fi
+        done
+    fi
+}
+
+# Command line debugging function
+debug_command_line() {
+    if [[ "${LD_WRAPPER_DEBUG:-}" == "YES" ]]; then
+        echo "=== COMMAND LINE DEBUG ===" >&1
+        echo "Full command: ${passthrough_args[*]}" >&1
+        echo "Args count: ${#passthrough_args[@]}" >&1
+        
+        # Check for key flags and their positions
+        local i=0
+        for arg in "${passthrough_args[@]}"; do
+            if [[ "$arg" == "-Wl,-all_load" ]]; then
+                echo "Found -all_load at position: $((i+1))" >&1
+            elif [[ "$arg" == "-Wl,-force_load,"* ]]; then
+                echo "Found force_load at position $((i+1)): $arg" >&1
+            elif [[ "$arg" == "-Wl,-export_dynamic" ]]; then
+                echo "Found -export_dynamic at position: $((i+1))" >&1
+            fi
+            ((i++))
+        done
+        echo "=========================" >&1
+    fi
+}
+
+# Logging function for debugging
+log_preview_setup() {
+    local is_preview="$1"
+    local swift_lib_count="$2"
+    
+    echo "=== PREVIEW SETUP SUMMARY ===" >&1
+    echo "Preview build detected: $is_preview" >&1
+    echo "Swift libraries found: $swift_lib_count" >&1
+    echo "Final passthrough args count: ${#passthrough_args[@]}" >&1
+    echo "============================" >&1
+    
+    # Always call debug_command_line to check for LD_WRAPPER_DEBUG
+    debug_command_line
+}
+
 # === Persistent trace so we can verify wrapper execution even if stderr is swallowed ===
 # Choose a path inside Bazel’s output tree if available, otherwise fallback to $TMPDIR.
 log_root="${BAZEL_OUT:-$TMPDIR}"
@@ -80,9 +294,9 @@ add_runtime_libraries() {
       runtime_lib_path="$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$clang_version/lib/darwin/$runtime_lib_name"
       echo "Trying runtime library path: $runtime_lib_path (platform: ${platform_name:-iphoneos})" >&1
       if [[ -f "$runtime_lib_path" ]]; then
-        passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
+        passthrough_args=("${passthrough_args[@]}" "-Wl,-force_load,$runtime_lib_path")
         has_clang_rt_flag=true
-        echo "SUCCESS: Added clang runtime library: $runtime_lib_path" >&1
+        echo "SUCCESS: Force-loaded clang runtime library: $runtime_lib_path" >&1
       else
         echo "FAILED: Runtime library not found at: $runtime_lib_path" >&1
       fi
@@ -96,9 +310,9 @@ add_runtime_libraries() {
       runtime_lib_path=$(find "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang" -name "$runtime_lib_name" 2>/dev/null | head -n1)
       echo "Search result: $runtime_lib_path" >&1
       if [[ -n "$runtime_lib_path" && -f "$runtime_lib_path" ]]; then
-        passthrough_args=("${passthrough_args[@]}" "$runtime_lib_path")
+        passthrough_args=("${passthrough_args[@]}" "-Wl,-force_load,$runtime_lib_path")
         has_clang_rt_flag=true
-        echo "SUCCESS: Found and added clang runtime library: $runtime_lib_path" >&1
+        echo "SUCCESS: Found and force-loaded clang runtime library: $runtime_lib_path" >&1
       else
         echo "FAILED: Runtime library not found via search" >&1
       fi
@@ -263,14 +477,13 @@ do
     echo "PREVIEW THUNK DETECTED: $1" >&1
     # Pass through for SwiftUI Preview thunk compilation
     
-    # Add runtime libraries for preview thunks
-    add_runtime_libraries "true"
+    # Use enhanced preview detection and setup
+    is_preview_build=$(detect_preview_build "${@:1}")
+    swift_libs=($(detect_swift_static_libraries "${@:1}"))
     
-    # Add Swift linking support for preview thunks
-    add_swift_linking_support "true"
-    
-    # Force-load merged static libraries for preview thunks
-    force_load_merged_static_libs "true"
+    setup_swift_runtime_for_previews "$is_preview_build"
+    force_load_swift_libraries "$is_preview_build" "${swift_libs[@]}"
+    log_preview_setup "$is_preview_build" "${#swift_libs[@]}"
     
     echo "Final passthrough_args for preview thunk: ${passthrough_args[*]}" >&1
     
@@ -281,25 +494,17 @@ do
   -o)
     echo "Output linking detected: $2" >&1
     # This is a real linking operation - use clang like preview-thunk does
-    # Check if this is a preview build by looking at environment or output path
-    is_preview_build=false
-    if [[ "${ENABLE_PREVIEWS:-}" == "YES" ]] || [[ "$2" == *"preview"* ]] || [[ "$2" == *"Preview"* ]]; then
-      is_preview_build=true
-      echo "Detected preview build" >&1
-    fi
     
-    # Add runtime libraries
-    add_runtime_libraries "$is_preview_build"
+    # Use enhanced preview detection and setup
+    is_preview_build=$(detect_preview_build "${@:1}")
+    swift_libs=($(detect_swift_static_libraries "${@:1}"))
     
-    # Add Swift linking support for preview builds
-    if [[ "$is_preview_build" == "true" ]]; then
-      add_swift_linking_support "true"
-    fi
+    echo "Enhanced preview detection result: $is_preview_build" >&1
     
-    # Force-load merged static libraries for preview builds
-    if [[ "$is_preview_build" == "true" ]]; then
-      force_load_merged_static_libs "true"
-    fi
+    # Apply preview-specific setup
+    setup_swift_runtime_for_previews "$is_preview_build"
+    force_load_swift_libraries "$is_preview_build" "${swift_libs[@]}"
+    log_preview_setup "$is_preview_build" "${#swift_libs[@]}"
     
     echo "Final passthrough_args for output linking: ${passthrough_args[*]}" >&1
     
